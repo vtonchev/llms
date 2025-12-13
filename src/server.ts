@@ -154,6 +154,8 @@ class Server {
                 .send({ error: "Missing model in request body" });
             }
             const [provider, ...model] = body.model.split(",");
+            // Preserve original model from Claude Code before modification
+            (req as any).originalModel = body.originalModel || body.model;
             body.model = model.join(',');
             req.provider = provider;
             return;
