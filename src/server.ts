@@ -72,7 +72,7 @@ class Server {
 
   constructor(options: ServerOptions = {}) {
     // 设置默认 logger，如果用户没有提供的话
-    const {initialConfig, ...fastifyOptions} = options;
+    const { initialConfig, ...fastifyOptions } = options;
     this.app = createApp({
       ...fastifyOptions,
       logger: fastifyOptions.logger ?? true,
@@ -130,6 +130,7 @@ class Server {
       this.app._server = this;
 
       this.app.addHook("preHandler", (request, reply, done) => {
+        console.log("[preHandler] 3")
         if (request.url.startsWith("/v1/messages") && request.body) {
           request.log.info({ data: request.body, type: "request body" });
           request.body.stream === true;
@@ -143,6 +144,7 @@ class Server {
       this.app.addHook(
         "preHandler",
         async (req: FastifyRequest, reply: FastifyReply) => {
+          console.log("[preHandler] 4")
           if (req.url.startsWith("/api") || req.method !== "POST") return;
           try {
             const body = req.body as any;

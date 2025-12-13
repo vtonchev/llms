@@ -118,9 +118,9 @@ export class AnthropicTransformer implements Transformer {
                         url:
                           part.source?.type === "base64"
                             ? formatBase64(
-                                part.source.data,
-                                part.source.media_type
-                              )
+                              part.source.data,
+                              part.source.media_type
+                            )
                             : part.source.url,
                       },
                       media_type: part.source.media_type,
@@ -1034,12 +1034,12 @@ export class AnthropicTransformer implements Transformer {
           choice.finish_reason === "stop"
             ? "end_turn"
             : choice.finish_reason === "length"
-            ? "max_tokens"
-            : choice.finish_reason === "tool_calls"
-            ? "tool_use"
-            : choice.finish_reason === "content_filter"
-            ? "stop_sequence"
-            : "end_turn",
+              ? "max_tokens"
+              : choice.finish_reason === "tool_calls"
+                ? "tool_use"
+                : choice.finish_reason === "content_filter"
+                  ? "stop_sequence"
+                  : "end_turn",
         stop_sequence: null,
         usage: {
           input_tokens:

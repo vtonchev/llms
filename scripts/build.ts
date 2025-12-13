@@ -29,7 +29,7 @@ const esmConfig: esbuild.BuildOptions = {
 
 async function build() {
   console.log("Building CJS and ESM versions...");
-  
+
   const cjsCtx = await esbuild.context(cjsConfig);
   const esmCtx = await esbuild.context(esmConfig);
 
@@ -44,12 +44,12 @@ async function build() {
       cjsCtx.rebuild(),
       esmCtx.rebuild(),
     ]);
-    
+
     await Promise.all([
       cjsCtx.dispose(),
       esmCtx.dispose(),
     ]);
-    
+
     console.log("✅ Build completed successfully!");
     console.log("  - CJS: dist/cjs/server.cjs");
     console.log("  - ESM: dist/esm/server.mjs");

@@ -19,15 +19,14 @@ export class TransformerService {
   constructor(
     private readonly configService: ConfigService,
     private readonly logger: any
-  ) {}
+  ) { }
 
   registerTransformer(name: string, transformer: Transformer): void {
     this.transformers.set(name, transformer);
     this.logger.info(
-      `register transformer: ${name}${
-        transformer.endPoint
-          ? ` (endpoint: ${transformer.endPoint})`
-          : " (no endpoint)"
+      `register transformer: ${name}${transformer.endPoint
+        ? ` (endpoint: ${transformer.endPoint})`
+        : " (no endpoint)"
       }`
     );
   }
@@ -161,3 +160,4 @@ export class TransformerService {
     }
   }
 }
+

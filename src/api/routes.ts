@@ -6,12 +6,15 @@ import {
 } from "fastify";
 import { RegisterProviderRequest, LLMProvider } from "@/types/llm";
 import { sendUnifiedRequest } from "@/utils/request";
+import { requestQueue } from "@/utils/requestQueue";
 import { createApiError } from "./middleware";
 import { version } from "../../package.json";
 
 /**
- * 处理transformer端点的主函数
- * 协调整个请求处理流程：验证提供者、处理请求转换器、发送请求、处理响应转换器、格式化响应
+ * Main function to handle transformer endpoints.
+ * Coordinates the entire request processing flow: validating the provider,
+ * processing the request transformer, sending the request, processing the
+ * response transformer, and formatting the response.
  */
 async function handleTransformerEndpoint(
   req: FastifyRequest,
@@ -33,6 +36,7 @@ async function handleTransformerEndpoint(
   }
 
   // 处理请求转换器链
+
   const { requestBody, config, bypass } = await processRequestTransformers(
     body,
     provider,
@@ -43,23 +47,71 @@ async function handleTransformerEndpoint(
     }
   );
 
-  // 发送请求到LLM提供者
-  const response = await sendRequestToProvider(
-    requestBody,
-    config,
-    provider,
-    fastify,
-    bypass,
-    transformer,
-    {
-      req,
-    }
+  req.log.info({ requestBody, config: config, provider, bypass, transformer }, '[handleTransformerEndpoint] Before sendRequestToProvider');
+
+  // Queue and send request to LLM provider (serialized per provider)
+  const queueLength = requestQueue.getQueueLength(providerName);
+  if (queueLength > 0) {
+    req.log.info({ provider: providerName, queueLength }, '[handleTransformerEndpoint] Request queued');
+  }
+
+  const response = await requestQueue.enqueue(providerName, () =>
+    sendRequestToProvider(
+      requestBody,
+      config,
+      provider,
+      fastify,
+      bypass,
+      transformer,
+      {
+        req,
+      }
+    )
   );
+
+  // Log response with stream content (tee the stream to preserve it)
+  let logResponse = response;
+  if (response.body) {
+    const [logStream, processStream] = response.body.tee();
+    // Read and log the stream content in background
+    (async () => {
+      const reader = logStream.getReader();
+      const chunks: Uint8Array[] = [];
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+        const text = new TextDecoder().decode(Buffer.concat(chunks.map(c => Buffer.from(c))));
+        req.log.info({ streamBody: text.slice(0, 5000) }, '[handleTransformerEndpoint] Response stream content');
+      } catch (e) {
+        req.log.error({ error: e }, '[handleTransformerEndpoint] Error reading stream');
+      }
+    })();
+    // Create new response with the process stream
+    logResponse = new Response(processStream, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers
+    });
+  }
+
+  req.log.info({
+    response: {
+      status: response.status,
+      statusText: response.statusText,
+      headers: Object.fromEntries(response.headers.entries()),
+      ok: response.ok,
+      type: response.type,
+      url: response.url
+    }
+  }, '[handleTransformerEndpoint] After sendRequestToProvider');
 
   // 处理响应转换器链
   const finalResponse = await processResponseTransformers(
     requestBody,
-    response,
+    logResponse,
     provider,
     transformer,
     bypass,
@@ -229,23 +281,76 @@ async function sendRequestToProvider(
     }
   }
 
-  const response = await sendUnifiedRequest(
-    url,
-    requestBody,
-    {
-      httpsProxy: fastify._server!.configService.getHttpsProxy(),
-      ...config,
-      headers: JSON.parse(JSON.stringify(requestHeaders)),
-    },
-    fastify.log,
-    context
-  );
+  // Helper function to make the actual request
+  const makeRequest = async () => {
+    return sendUnifiedRequest(
+      url,
+      requestBody,
+      {
+        httpsProxy: fastify._server!.configService.getHttpsProxy(),
+        ...config,
+        headers: JSON.parse(JSON.stringify(requestHeaders)),
+      },
+      fastify.log,
+      context
+    );
+  };
 
-  // 处理请求错误
-  if (!response.ok) {
+  let response = await makeRequest();
+
+  // Handle 429 rate limit with 1 retry
+  if (response.status === 429) {
+    const errorText = await response.text();
+    fastify.log.warn(
+      `[rate_limit] Got 429 from provider(${provider.name}), attempting retry...`
+    );
+
+    // Try to parse retryDelay from the response
+    let retryDelayMs = 1000; // Default 1 second
+    try {
+      const errorBody = JSON.parse(errorText);
+      const retryInfo = errorBody?.error?.details?.find(
+        (d: any) => d["@type"]?.includes("RetryInfo")
+      );
+      if (retryInfo?.retryDelay) {
+        // Parse "1.085714732s" format
+        const delayStr = retryInfo.retryDelay;
+        const seconds = parseFloat(delayStr.replace("s", ""));
+        if (!isNaN(seconds)) {
+          retryDelayMs = Math.ceil(seconds * 1000);
+        }
+      }
+    } catch (e) {
+      // Use default delay if parsing fails
+    }
+
+    fastify.log.info(
+      `[rate_limit] Waiting ${retryDelayMs}ms before retry...`
+    );
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+
+    // Retry once
+    response = await makeRequest();
+
+    // If still failing after retry, throw the error
+    if (!response.ok) {
+      const retryErrorText = await response.text();
+      fastify.log.error(
+        `[provider_response_error] Error from provider after retry(${provider.name},${requestBody.model}: ${response.status}): ${retryErrorText}`
+      );
+      throw createApiError(
+        `Error from provider(${provider.name},${requestBody.model}: ${response.status}): ${retryErrorText}`,
+        response.status,
+        "provider_response_error"
+      );
+    }
+
+    fastify.log.info(`[rate_limit] Retry successful for provider(${provider.name})`);
+  } else if (!response.ok) {
+    // Handle other errors (non-429)
     const errorText = await response.text();
     fastify.log.error(
-      `[provider_response_error] Error from provider(${provider.name},${requestBody.model}: ${response.status}): ${errorText}`,
+      `[provider_response_error] Error from provider(${provider.name},${requestBody.model}: ${response.status}): ${errorText}`
     );
     throw createApiError(
       `Error from provider(${provider.name},${requestBody.model}: ${response.status}): ${errorText}`,
@@ -272,6 +377,7 @@ async function processResponseTransformers(
   let finalResponse = response;
 
   // 执行provider级别的响应转换器
+  context.req?.log?.info?.({ bypass, hasTransformerUse: !!provider.transformer?.use?.length, transformerUseLength: provider.transformer?.use?.length }, '[processResponseTransformers] Provider check');
   if (!bypass && provider.transformer?.use?.length) {
     for (const providerTransformer of Array.from(
       provider.transformer.use
@@ -286,6 +392,10 @@ async function processResponseTransformers(
         finalResponse,
         context
       );
+      // Log headers after transformer to debug
+      const headersObj: Record<string, string> = {};
+      finalResponse.headers?.forEach?.((v: string, k: string) => { headersObj[k] = v; });
+      context.req?.log?.info?.({ headers: headersObj }, '[processResponseTransformers] After provider transformer');
     }
   }
 
@@ -308,7 +418,11 @@ async function processResponseTransformers(
   }
 
   // 执行transformer的transformResponseIn方法
-  if (!bypass && transformer.transformResponseIn) {
+  // Skip if response has X-Skip-Response-Transform header (e.g., Antigravity already outputs Anthropic format)
+  const skipHeader = finalResponse.headers?.get?.('X-Skip-Response-Transform');
+  const skipResponseTransform = skipHeader === 'true';
+  console.log('[routes] Skip header check:', { skipHeader, skipResponseTransform, hasHeaders: !!finalResponse.headers });
+  if (!bypass && !skipResponseTransform && transformer.transformResponseIn) {
     finalResponse = await transformer.transformResponseIn(
       finalResponse,
       context
@@ -328,8 +442,12 @@ function formatResponse(response: any, reply: FastifyReply, body: any) {
     reply.code(response.status);
   }
 
-  // 处理流式响应
-  const isStream = body.stream === true;
+  // 处理流式响应 - check both body.stream and response Content-Type
+  const contentType = response.headers?.get?.("Content-Type") || "";
+  const isStream = body.stream === true || contentType.includes("text/event-stream") || contentType.includes("stream");
+
+  reply.log.info({ isStream, bodyStream: body.stream, contentType }, '[formatResponse] Stream detection');
+
   if (isStream) {
     reply.header("Content-Type", "text/event-stream");
     reply.header("Cache-Control", "no-cache");
@@ -337,6 +455,7 @@ function formatResponse(response: any, reply: FastifyReply, body: any) {
     return reply.send(response.body);
   } else {
     // 处理普通JSON响应
+    reply.log.info('[formatResponse] Calling response.json() for non-streaming response');
     return response.json();
   }
 }
@@ -552,9 +671,8 @@ export const registerApiRoutes: FastifyPluginAsync = async (
         throw createApiError("Provider not found", 404, "provider_not_found");
       }
       return {
-        message: `Provider ${
-          request.body.enabled ? "enabled" : "disabled"
-        } successfully`,
+        message: `Provider ${request.body.enabled ? "enabled" : "disabled"
+          } successfully`,
       };
     }
   );
