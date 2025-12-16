@@ -226,14 +226,14 @@ export class ForceReasoningTransformer implements Transformer {
                 }
               } else if (fsmState === "FINAL") {
                 if (currentContent.length > 0) {
-                  // 检查内容是否只包含换行符
+                  // Check if content contains only newlines
                   const isOnlyNewlines = /^\s*$/.test(currentContent);
 
                   if (isOnlyNewlines) {
-                    // 如果只有换行符，添加到缓冲区但不发送
+                    // If only newlines, add to buffer but do not send
                     finalBuffer += currentContent;
                   } else {
-                    // 如果有非换行符内容，将缓冲区和新内容一起发送
+                    // If there is non-newline content, send buffer and new content together
                     const finalPart = finalBuffer + currentContent;
                     const newDelta = {
                       ...originalData.choices[0].delta,
@@ -249,7 +249,7 @@ export class ForceReasoningTransformer implements Transformer {
                     controller.enqueue(
                       encoder.encode(`data: ${JSON.stringify(finalChunk)}\n\n`)
                     );
-                    // 发送后清空缓冲区
+                    // Clear buffer after sending
                     finalBuffer = "";
                   }
                 }

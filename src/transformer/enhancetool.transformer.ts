@@ -8,7 +8,7 @@ export class EnhanceToolTransformer implements Transformer {
     if (response.headers.get("Content-Type")?.includes("application/json")) {
       const jsonResponse = await response.json();
       if (jsonResponse?.choices?.[0]?.message?.tool_calls?.length) {
-        // 处理非流式的工具调用参数解析
+        // Handle parsing of tool call arguments for non-streaming responses
         for (const toolCall of jsonResponse.choices[0].message.tool_calls) {
           if (toolCall.function?.arguments) {
             toolCall.function.arguments = parseToolArguments(
@@ -45,7 +45,7 @@ export class EnhanceToolTransformer implements Transformer {
       let reasoningContent = "";
       let isReasoningComplete = false;
       let hasToolCall = false;
-      let buffer = ""; // 用于缓冲不完整的数据
+      let buffer = ""; // Buffer for incomplete data
 
       const stream = new ReadableStream({
         async start(controller) {
@@ -74,9 +74,8 @@ export class EnhanceToolTransformer implements Transformer {
               finalArgs = parseToolArguments(currentToolCall.arguments || "", this.logger);
             } catch (e: any) {
               console.error(
-                `${e.message} ${
-                  e.stack
-                }  工具调用参数解析失败: ${JSON.stringify(
+                `${e.message} ${e.stack
+                }  Failed to parse tool call arguments: ${JSON.stringify(
                   currentToolCall
                 )}`
               );
@@ -205,7 +204,7 @@ export class EnhanceToolTransformer implements Transformer {
                 const modifiedLine = `data: ${JSON.stringify(data)}\n\n`;
                 controller.enqueue(encoder.encode(modifiedLine));
               } catch (e) {
-                // 如果JSON解析失败，可能是数据不完整，将原始行传递下去
+                // If JSON parsing fails, it might be incomplete data, pass the original line
                 controller.enqueue(encoder.encode(line + "\n"));
               }
             } else {
@@ -218,14 +217,14 @@ export class EnhanceToolTransformer implements Transformer {
             while (true) {
               const { done, value } = await reader.read();
               if (done) {
-                // 处理缓冲区中剩余的数据
+                // Process remaining data in buffer
                 if (buffer.trim()) {
                   processBuffer(buffer, controller, encoder);
                 }
                 break;
               }
 
-              // 检查value是否有效
+              // Check if value is valid
               if (!value || value.length === 0) {
                 continue;
               }
@@ -244,9 +243,9 @@ export class EnhanceToolTransformer implements Transformer {
 
               buffer += chunk;
 
-              // 如果缓冲区过大，进行处理避免内存泄漏
+              // If buffer is too large, process to avoid memory leak
               if (buffer.length > 1000000) {
-                // 1MB 限制
+                // 1MB limit
                 console.warn(
                   "Buffer size exceeds limit, processing partial data"
                 );
@@ -270,7 +269,7 @@ export class EnhanceToolTransformer implements Transformer {
                       });
                     } catch (error) {
                       console.error("Error processing line:", line, error);
-                      // 如果解析失败，直接传递原始行
+                      // If parsing fails, pass original line directly
                       controller.enqueue(encoder.encode(line + "\n"));
                     }
                   }
@@ -278,9 +277,9 @@ export class EnhanceToolTransformer implements Transformer {
                 continue;
               }
 
-              // 处理缓冲区中完整的数据行
+              // Process complete data lines in buffer
               const lines = buffer.split("\n");
-              buffer = lines.pop() || ""; // 最后一行可能不完整，保留在缓冲区
+              buffer = lines.pop() || ""; // Last line might be incomplete, keep in buffer
 
               for (const line of lines) {
                 if (!line.trim()) continue;
@@ -299,7 +298,7 @@ export class EnhanceToolTransformer implements Transformer {
                   });
                 } catch (error) {
                   console.error("Error processing line:", line, error);
-                  // 如果解析失败，直接传递原始行
+                  // If parsing fails, pass original line directly
                   controller.enqueue(encoder.encode(line + "\n"));
                 }
               }

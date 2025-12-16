@@ -14,6 +14,9 @@ import { v4 as uuidv4 } from "uuid";
 import { getThinkLevel } from "@/utils/thinking";
 import { createApiError } from "@/api/middleware";
 import { formatBase64 } from "@/utils/image";
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 
 export class AnthropicTransformer implements Transformer {
   name = "Anthropic";
@@ -48,6 +51,19 @@ export class AnthropicTransformer implements Transformer {
     request: Record<string, any>
   ): Promise<UnifiedChatRequest> {
     const messages: UnifiedMessage[] = [];
+    const now = new Date().toISOString();
+    (globalThis as any).timestamp = now
+
+    
+    await fs.promises.writeFile(
+      path.join(process.cwd(), "logs", `test-${(globalThis as any).timestamp}.jsonc`),
+      `\
+      //=============================================== \n\
+      //=    Antropic Original Request                = \n\
+      //=============================================== \n\
+      ${JSON.stringify(request)}\n`,
+      { encoding: "utf-8", flag: "a" }
+    );
 
     if (request.system) {
       if (typeof request.system === "string") {
@@ -205,6 +221,18 @@ export class AnthropicTransformer implements Transformer {
         result.tool_choice = request.tool_choice.type;
       }
     }
+
+      
+      await fs.promises.writeFile(
+        path.join(process.cwd(), "logs", `test-${(globalThis as any).timestamp}.jsonc`),
+        `\
+        //=============================================== \n\
+        //=            Unified Request Out              = \n\
+        //=============================================== \n\
+        ${JSON.stringify(result)}\n`,
+        { encoding: "utf-8", flag: "a" }
+      );
+
     return result;
   }
 
@@ -212,6 +240,13 @@ export class AnthropicTransformer implements Transformer {
     response: Response,
     context?: TransformerContext
   ): Promise<Response> {
+    // Skip if already transformed (e.g., by websearch transformer that outputs Anthropic format)
+    const skipHeader = response.headers.get("X-Skip-Response-Transform");
+    if (skipHeader === "true") {
+      console.log("[Anthropic] Skipping transformResponseIn - X-Skip-Response-Transform is set");
+      return response;
+    }
+    
     const isStream = response.headers
       .get("Content-Type")
       ?.includes("text/event-stream");
@@ -276,7 +311,7 @@ export class AnthropicTransformer implements Transformer {
         let contentIndex = 0;
         let currentContentBlockIndex = -1; // Track the current content block index
 
-        // 原子性的content block index分配函数
+        // Atomic content block index allocation function
         const assignContentBlockIndex = (): number => {
           const currentIndex = contentIndex;
           contentIndex++;

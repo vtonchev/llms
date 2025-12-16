@@ -26,7 +26,7 @@ async function handleTransformerEndpoint(
   const providerName = req.provider!;
   const provider = fastify._server!.providerService.getProvider(providerName);
 
-  // 验证提供者是否存在
+  // Validate if provider exists
   if (!provider) {
     throw createApiError(
       `Provider '${providerName}' not found`,
@@ -35,7 +35,7 @@ async function handleTransformerEndpoint(
     );
   }
 
-  // 处理请求转换器链
+  // Process request transformer chain
 
   const { requestBody, config, bypass } = await processRequestTransformers(
     body,
@@ -108,7 +108,7 @@ async function handleTransformerEndpoint(
     }
   }, '[handleTransformerEndpoint] After sendRequestToProvider');
 
-  // 处理响应转换器链
+  // Process response transformer chain
   const finalResponse = await processResponseTransformers(
     requestBody,
     logResponse,
@@ -120,14 +120,14 @@ async function handleTransformerEndpoint(
     }
   );
 
-  // 格式化并返回响应
+  // Format and return response
   return formatResponse(finalResponse, reply, body);
 }
 
 /**
- * 处理请求转换器链
- * 依次执行transformRequestOut、provider transformers、model-specific transformers
- * 返回处理后的请求体、配置和是否跳过转换器的标志
+ * Process request transformer chain
+ * Execute transformRequestOut, provider transformers, and model-specific transformers in order
+ * Return processed request body, config, and bypass flag
  */
 async function processRequestTransformers(
   body: any,
@@ -139,8 +139,8 @@ async function processRequestTransformers(
   let requestBody = body;
   let config = {};
   let bypass = false;
-
-  // 检查是否应该跳过转换器（透传参数）
+  console.log("[processRequestTransformers]",transformer.name)
+  // Check if transformers should be bypassed (pass-through parameters)
   bypass = shouldBypassTransformers(provider, transformer, body);
 
   if (bypass) {
@@ -152,7 +152,7 @@ async function processRequestTransformers(
     config.headers = headers;
   }
 
-  // 执行transformer的transformRequestOut方法
+  // Execute transformer's transformRequestOut method
   if (!bypass && typeof transformer.transformRequestOut === "function") {
     const transformOut = await transformer.transformRequestOut(requestBody);
     if (transformOut.body) {
@@ -163,7 +163,7 @@ async function processRequestTransformers(
     }
   }
 
-  // 执行provider级别的转换器
+  // Execute provider-level transformers
   if (!bypass && provider.transformer?.use?.length) {
     for (const providerTransformer of provider.transformer.use) {
       if (
@@ -186,7 +186,7 @@ async function processRequestTransformers(
     }
   }
 
-  // 执行模型特定的转换器
+  // Execute model-specific transformers
   if (!bypass && provider.transformer?.[body.model]?.use?.length) {
     for (const modelTransformer of provider.transformer[body.model].use) {
       if (
@@ -195,6 +195,7 @@ async function processRequestTransformers(
       ) {
         continue;
       }
+      
       requestBody = await modelTransformer.transformRequestIn(
         requestBody,
         provider,
@@ -207,8 +208,8 @@ async function processRequestTransformers(
 }
 
 /**
- * 判断是否应该跳过转换器（透传参数）
- * 当provider只使用一个transformer且该transformer与当前transformer相同时，跳过其他转换器
+ * Determine if transformers should be bypassed (pass-through parameters)
+ * Bypass other transformers when provider uses only one transformer and it matches the current transformer
  */
 function shouldBypassTransformers(
   provider: any,
@@ -225,8 +226,8 @@ function shouldBypassTransformers(
 }
 
 /**
- * 发送请求到LLM提供者
- * 处理认证、构建请求配置、发送请求并处理错误
+ * Send request to LLM provider
+ * Handle authentication, build request config, send request, and handle errors
  */
 async function sendRequestToProvider(
   requestBody: any,
@@ -239,7 +240,7 @@ async function sendRequestToProvider(
 ) {
   const url = config.url || new URL(provider.baseUrl);
 
-  // 在透传参数下处理认证
+  // Handle authentication under pass-through parameters
   if (bypass && typeof transformer.auth === "function") {
     const auth = await transformer.auth(requestBody, provider);
     if (auth.body) {
@@ -263,8 +264,8 @@ async function sendRequestToProvider(
     }
   }
 
-  // 发送HTTP请求
-  // 准备headers
+  // Send HTTP request
+  // Prepare headers
   const requestHeaders: Record<string, string> = {
     Authorization: `Bearer ${provider.apiKey}`,
     ...(config?.headers || {}),
@@ -363,8 +364,8 @@ async function sendRequestToProvider(
 }
 
 /**
- * 处理响应转换器链
- * 依次执行provider transformers、model-specific transformers、transformer的transformResponseIn
+ * Process response transformer chain
+ * Execute provider transformers, model-specific transformers, and transformer's transformResponseIn in order
  */
 async function processResponseTransformers(
   requestBody: any,
@@ -376,7 +377,7 @@ async function processResponseTransformers(
 ) {
   let finalResponse = response;
 
-  // 执行provider级别的响应转换器
+  // Execute provider-level response transformers
   context.req?.log?.info?.({ bypass, hasTransformerUse: !!provider.transformer?.use?.length, transformerUseLength: provider.transformer?.use?.length }, '[processResponseTransformers] Provider check');
   if (!bypass && provider.transformer?.use?.length) {
     for (const providerTransformer of Array.from(
@@ -399,7 +400,7 @@ async function processResponseTransformers(
     }
   }
 
-  // 执行模型特定的响应转换器
+  // Execute model-specific response transformers
   if (!bypass && provider.transformer?.[requestBody.model]?.use?.length) {
     for (const modelTransformer of Array.from(
       provider.transformer[requestBody.model].use
@@ -417,7 +418,7 @@ async function processResponseTransformers(
     }
   }
 
-  // 执行transformer的transformResponseIn方法
+  // Execute transformer's transformResponseIn method
   // Skip if response has X-Skip-Response-Transform header (e.g., Antigravity already outputs Anthropic format)
   const skipHeader = finalResponse.headers?.get?.('X-Skip-Response-Transform');
   const skipResponseTransform = skipHeader === 'true';
@@ -433,16 +434,16 @@ async function processResponseTransformers(
 }
 
 /**
- * 格式化并返回响应
- * 处理HTTP状态码、流式响应和普通响应的格式化
+ * Format and return response
+ * Handle HTTP status code, streaming response, and normal response formatting
  */
 function formatResponse(response: any, reply: FastifyReply, body: any) {
-  // 设置HTTP状态码
+  // Set HTTP status code
   if (!response.ok) {
     reply.code(response.status);
   }
 
-  // 处理流式响应 - check both body.stream and response Content-Type
+  // Handle streaming response - check both body.stream and response Content-Type
   const contentType = response.headers?.get?.("Content-Type") || "";
   const isStream = body.stream === true || contentType.includes("text/event-stream") || contentType.includes("stream");
 
@@ -454,7 +455,7 @@ function formatResponse(response: any, reply: FastifyReply, body: any) {
     reply.header("Connection", "keep-alive");
     return reply.send(response.body);
   } else {
-    // 处理普通JSON响应
+    // Handle normal JSON response
     reply.log.info('[formatResponse] Calling response.json() for non-streaming response');
     return response.json();
   }

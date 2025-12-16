@@ -71,7 +71,7 @@ class Server {
   transformerService: TransformerService;
 
   constructor(options: ServerOptions = {}) {
-    // 设置默认 logger，如果用户没有提供的话
+    // Set default logger if user did not provide one
     const { initialConfig, ...fastifyOptions } = options;
     this.app = createApp({
       ...fastifyOptions,
