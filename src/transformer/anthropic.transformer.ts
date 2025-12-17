@@ -54,16 +54,6 @@ export class AnthropicTransformer implements Transformer {
     const now = new Date().toISOString();
     (globalThis as any).timestamp = now
 
-    
-    await fs.promises.writeFile(
-      path.join(process.cwd(), "logs", `test-${(globalThis as any).timestamp}.jsonc`),
-      `\
-      //=============================================== \n\
-      //=    Antropic Original Request                = \n\
-      //=============================================== \n\
-      ${JSON.stringify(request)}\n`,
-      { encoding: "utf-8", flag: "a" }
-    );
 
     if (request.system) {
       if (typeof request.system === "string") {
@@ -221,17 +211,6 @@ export class AnthropicTransformer implements Transformer {
         result.tool_choice = request.tool_choice.type;
       }
     }
-
-      
-      await fs.promises.writeFile(
-        path.join(process.cwd(), "logs", `test-${(globalThis as any).timestamp}.jsonc`),
-        `\
-        //=============================================== \n\
-        //=            Unified Request Out              = \n\
-        //=============================================== \n\
-        ${JSON.stringify(result)}\n`,
-        { encoding: "utf-8", flag: "a" }
-      );
 
     return result;
   }

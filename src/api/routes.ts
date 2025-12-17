@@ -299,45 +299,70 @@ async function sendRequestToProvider(
 
   let response = await makeRequest();
 
-  // Handle 429 rate limit with 1 retry
+  /**
+   * Handle 429 rate limit with intelligent retry logic:
+   * 
+   * Two scenarios:
+   * 1. Response HAS retryDelay field → Wait for specified delay, then retry once (standard behavior)
+   * 2. Response has NO retryDelay field → Quick retry every 100ms until:
+   *    a) Response includes retryDelay → switch to scenario 1
+   *    b) Request succeeds
+   *    c) Max retries reached (safety limit)
+   * 
+   * This handles cases where the API returns 429 without delay info, indicating
+   * the request should be retried immediately/quickly.
+   */
   if (response.status === 429) {
-    const errorText = await response.text();
-    fastify.log.warn(
-      `[rate_limit] Got 429 from provider(${provider.name}), attempting retry...`
-    );
+    const MAX_RETRIES_NO_DELAY = 10; // Safety limit for quick retries without retryDelay
+    let retryCount = 0;
 
-    // Try to parse retryDelay from the response
-    let retryDelayMs = 1000; // Default 1 second
-    try {
-      const errorBody = JSON.parse(errorText);
-      const retryInfo = errorBody?.error?.details?.find(
-        (d: any) => d["@type"]?.includes("RetryInfo")
-      );
-      if (retryInfo?.retryDelay) {
-        // Parse "1.085714732s" format
-        const delayStr = retryInfo.retryDelay;
-        const seconds = parseFloat(delayStr.replace("s", ""));
-        if (!isNaN(seconds)) {
-          retryDelayMs = Math.ceil(seconds * 1000);
+    while (response.status === 429 && retryCount < MAX_RETRIES_NO_DELAY) {
+      const errorText = await response.text();
+      
+      // Parse retryDelay from the response (format: "1.085714732s")
+      let retryDelayMs: number | null = null;
+      try {
+        const errorBody = JSON.parse(errorText);
+        const retryInfo = errorBody?.error?.details?.find(
+          (d: any) => d["@type"]?.includes("RetryInfo")
+        );
+        if (retryInfo?.retryDelay) {
+          const delayStr = retryInfo.retryDelay;
+          const seconds = parseFloat(delayStr.replace("s", ""));
+          if (!isNaN(seconds)) {
+            retryDelayMs = Math.ceil(seconds * 1000);
+          }
         }
+      } catch (e) {
+        // Parsing failed - treat as no retryDelay present
       }
-    } catch (e) {
-      // Use default delay if parsing fails
+
+      if (retryDelayMs !== null) {
+        // SCENARIO 1: Has retryDelay → use it and do single retry (standard behavior)
+        fastify.log.info(
+          `[rate_limit] Got retryDelay: ${retryDelayMs}ms from provider(${provider.name}), waiting...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        response = await makeRequest();
+        retryCount++;
+        break; // Exit loop - we've done the delay-based retry
+      } else {
+        // SCENARIO 2: No retryDelay → quick retry with 100ms
+        fastify.log.warn(
+          `[rate_limit] 429 without retryDelay from provider(${provider.name}), quick retry #${retryCount + 1} in 100ms...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        response = await makeRequest();
+        retryCount++;
+        // Continue loop - check if next response has retryDelay or succeeds
+      }
     }
 
-    fastify.log.info(
-      `[rate_limit] Waiting ${retryDelayMs}ms before retry...`
-    );
-    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-
-    // Retry once
-    response = await makeRequest();
-
-    // If still failing after retry, throw the error
+    // Handle final result after retry attempts
     if (!response.ok) {
       const retryErrorText = await response.text();
       fastify.log.error(
-        `[provider_response_error] Error from provider after retry(${provider.name},${requestBody.model}: ${response.status}): ${retryErrorText}`
+        `[provider_response_error] Error from provider after ${retryCount} retries(${provider.name},${requestBody.model}: ${response.status}): ${retryErrorText}`
       );
       throw createApiError(
         `Error from provider(${provider.name},${requestBody.model}: ${response.status}): ${retryErrorText}`,
@@ -346,7 +371,9 @@ async function sendRequestToProvider(
       );
     }
 
-    fastify.log.info(`[rate_limit] Retry successful for provider(${provider.name})`);
+    fastify.log.info(
+      `[rate_limit] Retry successful after ${retryCount} attempt(s) for provider(${provider.name})`
+    );
   } else if (!response.ok) {
     // Handle other errors (non-429)
     const errorText = await response.text();
