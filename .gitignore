@@ -1,11 +1,53 @@
-pnpm-lock.yaml
-dist
-.env.example
-node_modules
-.DS_Store
-.vscode
-*.log
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# Environment files
 .env
-config.json
-.idea
-.cursor
+.env.local
+.env.*.local
+
+# IDE and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Package lock files
+**/pnpm-lock.yaml
+**/package-lock.json
+**/yarn.lock
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+tmp/
+
+# Project-specific
+.agent/
+log.txt
+1.txt
